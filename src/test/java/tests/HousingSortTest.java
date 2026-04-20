@@ -1,90 +1,108 @@
 package tests;
 
 import base.BaseTest;
+import enums.SortOption;
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
+import io.qameta.allure.Feature;
 import io.qameta.allure.Severity;
 import io.qameta.allure.SeverityLevel;
+import io.qameta.allure.Story;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Tags;
 import org.junit.jupiter.api.Test;
 import pages.HousingPage;
-import pages.HousingPage.SortOption;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies the sorting options available on the Craigslist Madrid Housing page.
  *
- * Requirements under test (from the technical test document):
- *   1. By default:       price asc, price desc, newest
- *   2. After searching:  price asc, price desc, newest, upcoming, relevant
+ * <h2>Requirements under test</h2>
+ * <ol>
+ *   <li>Default page: {@code price-asc}, {@code price-desc}, {@code newest}</li>
+ *   <li>After search: adds {@code upcoming} and {@code relevance}</li>
+ * </ol>
  *
- * Implementation notes
- * --------------------
- * Sort options are identified by their stable CSS classes (e.g. cl-search-sort-mode-newest)
- * rather than their localised labels ("+ nuevo", "$ → $$$", etc). This makes the tests
- * robust against language changes.
- *
- * During development we observed that the Madrid site actually exposes 5 sort options by
- * default (newest, oldest, price-asc, price-desc, upcoming) — more than the 3 specified
- * in the requirement. The tests assert the REQUIRED options are present (which they are),
- * and log the full list of found options so any extras are visible in the report.
+ * <h2>Design notes</h2>
+ * <ul>
+ *   <li>Sort options are identified by their stable CSS class suffixes,
+ *       making detection locale-independent.</li>
+ *   <li>The live Madrid site exposes extra options beyond the requirement
+ *       ({@code oldest}, {@code distance}). The tests assert the required
+ *       options are <em>present</em> and attach the full observed list to
+ *       the Allure report for transparency.</li>
+ *   <li>{@code assertAll} is used so every missing option is reported in a
+ *       single run, rather than failing on the first one.</li>
+ * </ul>
  */
+@Feature("Housing — Sort options")
 public class HousingSortTest extends BaseTest {
 
     private static final String SEARCH_QUERY = "apartment";
 
     @Test
-    @DisplayName("Default Housing page should expose price asc, price desc and newest sort options")
+    @Tags({@Tag("smoke"), @Tag("sorting")})
+    @Story("Default sort options")
+    @DisplayName("Given default housing page, when sort dropdown opened, then required options are present")
     @Severity(SeverityLevel.CRITICAL)
-    @Description("Opens the Madrid Craigslist Housing page and verifies the default sort " +
-                 "dropdown contains the required options.")
+    @Description("Opens the Madrid Craigslist Housing page and verifies the default " +
+            "sort dropdown contains the required options (price-asc, price-desc, newest).")
     void defaultSortOptionsShouldBePresent() {
         HousingPage housing = new HousingPage(page).open();
 
-        List<String> options = housing.getAvailableSortOptions();
-        System.out.println("[default] sort options found: " + options);
+        List<String> rawOptions = housing.readVisibleSortOptionSuffixes();
+        Allure.addAttachment("Sort options observed (default)", rawOptions.toString());
 
-        assertOptionPresent(housing, SortOption.NEWEST);
-        assertOptionPresent(housing, SortOption.PRICE_ASC);
-        assertOptionPresent(housing, SortOption.PRICE_DESC);
+        List<SortOption> options = housing.readVisibleSortOptions();
+
+        assertAll("Required default sort options",
+                () -> assertSortOptionPresent(options, SortOption.NEWEST),
+                () -> assertSortOptionPresent(options, SortOption.PRICE_ASC),
+                () -> assertSortOptionPresent(options, SortOption.PRICE_DESC)
+        );
     }
 
     @Test
-    @DisplayName("After searching, sort options should include relevant and upcoming")
+    @Tags({@Tag("regression"), @Tag("sorting")})
+    @Story("Sort options after search")
+    @DisplayName("Given a housing search, when sort dropdown opened, then relevance and upcoming are present")
     @Severity(SeverityLevel.CRITICAL)
-    @Description("Performs a search on the Housing page and verifies that the sort dropdown " +
-                 "contains all required options, including relevant and upcoming.")
+    @Description("Performs a housing search and verifies the sort dropdown contains " +
+            "all required options, including relevance and upcoming.")
     void searchResultsShouldShowExtraSortOptions() {
         HousingPage housing = new HousingPage(page)
                 .open()
                 .search(SEARCH_QUERY);
 
-        List<String> options = housing.getAvailableSortOptions();
-        System.out.println("[after search] sort options found: " + options);
+        List<String> rawOptions = housing.readVisibleSortOptionSuffixes();
+        Allure.addAttachment("Sort options observed (after search)", rawOptions.toString());
 
-        // Default options still present
-        assertOptionPresent(housing, SortOption.NEWEST);
-        assertOptionPresent(housing, SortOption.PRICE_ASC);
-        assertOptionPresent(housing, SortOption.PRICE_DESC);
+        List<SortOption> options = housing.readVisibleSortOptions();
 
-        // Additional options after search
-        assertOptionPresent(housing, SortOption.UPCOMING);
-        assertOptionPresent(housing, SortOption.RELEVANT);
+        assertAll("Required sort options after search",
+                // Defaults still present
+                () -> assertSortOptionPresent(options, SortOption.NEWEST),
+                () -> assertSortOptionPresent(options, SortOption.PRICE_ASC),
+                () -> assertSortOptionPresent(options, SortOption.PRICE_DESC),
+                // Added after search
+                () -> assertSortOptionPresent(options, SortOption.UPCOMING),
+                () -> assertSortOptionPresent(options, SortOption.RELEVANT)
+        );
     }
 
-    /** Asserts a sort option exists with a clear failure message. */
-    private void assertOptionPresent(HousingPage housing, SortOption option) {
-        List<String> found = housing.getAvailableSortOptions();
-        boolean present = found.contains(option.name().toLowerCase().replace("_", "-"))
-                       || housing.hasSortOption(option);
+    /** Asserts a sort option is present with a descriptive failure message. */
+    private static void assertSortOptionPresent(List<SortOption> found, SortOption expected) {
         assertTrue(
-                present,
+                found.contains(expected),
                 () -> String.format(
-                        "Expected sort option '%s' to be present, but available options were: %s",
-                        option.name(), found
-                )
+                        "Expected sort option '%s' (class suffix '%s') to be present, " +
+                                "but available options were: %s",
+                        expected.name(), expected.classSuffix(), found)
         );
     }
 }

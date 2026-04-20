@@ -6,16 +6,14 @@ Browser-automation tests for the **Craigslist Madrid Housing** page, written in 
 
 ## What is tested
 
-The test suite verifies the **sorting functionality** of the Housing listing page:
+The suite verifies the **sorting functionality** of the Housing listing page:
 
 | Scenario | Sort options verified as present |
 |----------|----------------------------------|
 | **Default page load** | `price-asc`, `price-desc`, `newest` |
 | **After a search** | `price-asc`, `price-desc`, `newest`, **`upcoming`**, **`relevance`** |
 
-Tests are located in [`src/test/java/tests/HousingSortTest.java`](src/test/java/tests/HousingSortTest.java).
-
-> **Note:** During development, the live Madrid site was observed to expose more sort options than those specified in the original requirement (see [Observations](#observations-during-testing) below). The tests assert that the *required* options are present while logging the full list of observed options for transparency.
+> The live Madrid site exposes additional options (`oldest`, `distance`). The tests assert the *required* options are present while attaching the full observed list to the Allure report for transparency.
 
 ---
 
@@ -23,11 +21,12 @@ Tests are located in [`src/test/java/tests/HousingSortTest.java`](src/test/java/
 
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Language | **Java 17** | Stable, recommended in the assignment |
-| Browser automation | **Playwright 1.45** | Fast, reliable, modern (recommended in the assignment) |
-| Test framework | **JUnit 5** | Industry standard |
+| Language | **Java 17** | Stable LTS, recommended in the assignment |
+| Browser automation | **Playwright 1.45** | Built-in auto-wait, modern API, recommended in the assignment |
+| Test framework | **JUnit 5** | Industry standard, rich lifecycle annotations |
 | Build tool | **Maven** | Universally supported, easy onboarding |
-| Reporting | **Allure** | Rich HTML reports with steps, severity and failure context |
+| Reporting | **Allure** | Rich HTML reports with trace + screenshot on failure |
+| Logging | **SLF4J + Logback** | Structured logging, eliminates SLF4J binding warnings |
 
 ---
 
@@ -35,25 +34,37 @@ Tests are located in [`src/test/java/tests/HousingSortTest.java`](src/test/java/
 
 ```
 craigslist-qa-test/
-├── pom.xml                                 ← Maven dependencies & plugins
-├── README.md                               ← You are here
-└── src/test/java/
-    ├── base/
-    │   └── BaseTest.java                   ← Browser lifecycle (Playwright + JUnit5 hooks)
-    ├── pages/
-    │   └── HousingPage.java                ← Page Object Model for Housing page
-    └── tests/
-        └── HousingSortTest.java            ← Actual test scenarios
+├── pom.xml
+├── README.md
+└── src/test/
+    ├── java/
+    │   ├── base/
+    │   │   ├── BaseTest.java            ← Playwright lifecycle + tracing
+    │   │   └── TestFailureWatcher.java  ← JUnit 5 extension for failure detection
+    │   ├── config/
+    │   │   └── TestConfig.java          ← Centralised config (env > sys prop > default)
+    │   ├── enums/
+    │   │   └── SortOption.java          ← Typed sort options with reverse lookup
+    │   ├── pages/
+    │   │   ├── HousingLocators.java     ← Centralised CSS selectors
+    │   │   └── HousingPage.java         ← Page Object
+    │   └── tests/
+    │       └── HousingSortTest.java     ← Test scenarios
+    └── resources/
+        └── logback-test.xml
 ```
 
-### Design patterns and decisions
+### Design decisions
 
-- **Page Object Model (POM)** — selectors and page actions live in `HousingPage`, tests stay focused on *what* is being verified, not *how*.
-- **Base test class** — `BaseTest` owns the Playwright/Browser lifecycle so tests don't repeat boilerplate.
-- **Fluent API** — page methods return `this` (`open().search("apartment")`), making tests read like sentences.
-- **Sort options modelled as a Java `enum`** — each option maps to its stable CSS class suffix. Tests reference `SortOption.NEWEST` rather than magic strings, which gives compile-time safety and keeps the Page Object self-documenting.
-- **CSS-class-based detection (locale-independent)** — the Madrid site is in Spanish (`"+ nuevo"`, `"$ → $$$"`, etc). Matching on visible text would break if the site added other languages. Instead, the tests read stable CSS classes like `cl-search-sort-mode-newest`, which are language-independent.
-- **Encapsulated dropdown handling** — opening and closing the custom combo-box is handled by private helpers in `HousingPage` so tests never leak UI implementation details.
+- **Page Object Model** — page classes only expose intent; test classes express assertions. Business logic never leaks into `HousingPage`.
+- **Centralised locators** (`HousingLocators`) — UI changes are a one-file diff.
+- **Centralised config** (`TestConfig`) — env var → system property → default, so the same binary runs everywhere.
+- **Locale-independent detection** — sort options are matched by stable CSS-class suffixes (`cl-search-sort-mode-newest`), not localised labels. The Madrid site is in Spanish; text-based matching would break on language changes.
+- **Typed enum with reverse lookup** — `SortOption.fromClassSuffix(...)` returns `Optional`, gracefully handling unmodelled options added by Craigslist later.
+- **`assertAll`** — every missing option is reported in one run, not one-by-one.
+- **Tracing on failure** — a full Playwright trace (DOM snapshots, network, screenshots) and a final-state screenshot are attached to the Allure report only when a test fails. Makes CI failures debuggable without local repro.
+- **No `System.out`** — logs go through SLF4J; diagnostic info is attached to the Allure report.
+- **No `NETWORKIDLE` waits** — they are unreliable on sites that poll analytics or websockets. The framework waits for the specific element it needs instead.
 
 ---
 
@@ -61,36 +72,42 @@ craigslist-qa-test/
 
 - **Java 17+** — verify with `java -version`
 - **Maven 3.8+** — verify with `mvn -version`
-- Internet connection (to download Playwright browsers and reach craigslist.org)
+- Internet access (Playwright downloads Chromium on first run)
 
 ---
 
-## How to run the tests
+## Running the tests
 
-### 1. Clone the repository
 ```bash
-git clone https://github.com/<your-username>/craigslist-qa-test.git
-cd craigslist-qa-test
-```
-
-### 2. Run all tests
-```bash
+# All tests, headless (default)
 mvn test
-```
-*(Playwright automatically downloads Chromium on the first run — no extra step needed.)*
 
-### 3. Run with a visible browser (helpful for debugging)
-```bash
+# Watch the browser
 HEADLESS=false mvn test
+# or
+mvn test -Dheadless=false
+
+# Run only the smoke suite
+mvn test -Dgroups=smoke
+
+# Exclude a tag
+mvn test -DexcludedGroups=slow
+
+# Disable tracing for speed
+TRACING=false mvn test
+
+# Override timeout (seconds)
+TIMEOUT_SECONDS=30 mvn test
 ```
 
-### 4. Generate and open the Allure report
+### Allure report
+
 ```bash
 mvn allure:report
 # then open target/site/allure-maven-plugin/index.html
 ```
 
-If you have the Allure CLI installed, you can also run:
+Or with the Allure CLI:
 ```bash
 allure serve target/allure-results
 ```
@@ -99,53 +116,29 @@ allure serve target/allure-results
 
 ## Understanding test failures
 
-Every assertion produces a rich error message that shows:
+Assertion messages include:
 
-1. **Which sort option was expected** (e.g. `'RELEVANT'`)
-2. **All sort options that were actually found** on the page
+1. The **expected sort option** (enum name + CSS class suffix)
+2. The **full list of options observed** on the page
 
-Example failure message:
+Example:
 ```
-Expected sort option 'RELEVANT' to be present, but available options were:
-[newest, oldest, price-asc, price-desc, upcoming]
+Expected sort option 'RELEVANT' (class suffix 'relevance') to be present,
+but available options were: [NEWEST, PRICE_ASC, PRICE_DESC, UPCOMING]
 ```
 
-This makes it immediately clear whether:
-- the page didn't load properly
-- the search wasn't applied
-- Craigslist changed the available sort options
+On CI failures, also check:
+- **Allure report** — step-by-step execution with attached trace and final screenshot
+- **`target/traces/`** — open trace zips with `npx playwright show-trace <file>`
 
 ---
 
-## Observations during testing
+## Adding new tests
 
-When the tests were run against the live site, the sort dropdown exposed **more options** than the requirement specified:
-
-| State | Required by assignment | Actually observed on site |
-|-------|------------------------|----------------------------|
-| Default | 3 options | `newest, oldest, price-asc, price-desc, upcoming` (5) |
-| After search | 5 options | `newest, oldest, distance, price-asc, price-desc, relevance, upcoming` (7) |
-
-**Design decision:** the tests were written to assert that the **required** options are present — which they are — rather than asserting an exact count or exact match. This keeps the test suite honest to the requirement while being tolerant of additions the product team may have shipped after the spec was written. The full observed list is logged in the test output for full transparency.
-
----
-
-## How to add new tests
-
-1. Add new locators or actions to `HousingPage.java` (or create a new Page Object for a new page).
-2. Add a new `@Test` method in `HousingSortTest.java` (or create a new test class extending `BaseTest`).
-3. Use the fluent `HousingPage` API to keep tests readable.
-4. Run `mvn test` to verify.
-
----
-
-## Implementation notes
-
-- Each test gets a **fresh `BrowserContext`**, ensuring no cookies/state leak between tests.
-- The `Browser` instance is shared across the test class for performance, then closed in `@AfterAll`.
-- Tests are **headless by default** (CI-friendly), but easily toggled via the `HEADLESS=false` env var.
-- The Page Object exposes high-level intent (`hasSortOption(SortOption.NEWEST)`) instead of leaking CSS selectors into tests.
-- Dropdowns are closed by pressing `Escape` rather than re-clicking the trigger — more reliable and avoids accidentally selecting an option.
+1. Add locators to `HousingLocators` (or create a new `*Locators` class for a new page).
+2. Add high-level actions to `HousingPage` (or create a new Page Object extending nothing — just receiving `Page`).
+3. Add a `@Test` in `HousingSortTest` (or a new class extending `BaseTest`).
+4. Tag it (`@Tag("smoke")`) so CI pipelines can filter by suite.
 
 ---
 
